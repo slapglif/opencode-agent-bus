@@ -1,0 +1,20 @@
+{
+  "name": "agent-bus",
+  "version": "0.1.0",
+  "description": "Multi-agent message bus for coordinating AI agents across sessions via pub/sub, request/response, and broadcast patterns",
+  "author": {
+    "name": "slapglif",
+    "url": "https://github.com/slapglif"
+  },
+  "homepage": "https://github.com/slapglif/opencode-agent-bus",
+  "repository": "https://github.com/slapglif/opencode-agent-bus",
+  "license": "MIT",
+  "keywords": ["mcp", "message-bus", "multi-agent", "coordination", "pub-sub"],
+  "mcpServers": {
+    "agent-bus": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp-server/index.js"],
+      "env": {}
+    }
+  }
+}

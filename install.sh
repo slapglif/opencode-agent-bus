@@ -117,52 +117,51 @@ install_claude_code() {
 
     CLAUDE_DIR="$HOME/.claude"
     CLAUDE_SETTINGS="$CLAUDE_DIR/settings.json"
-    CLAUDE_SETTINGS_LOCAL="$CLAUDE_DIR/settings.local.json"
+    CLAUDE_PLUGINS_DIR="$CLAUDE_DIR/plugins/local"
 
-    # Create directory
+    # Create directories
     mkdir -p "$CLAUDE_DIR"
+    mkdir -p "$CLAUDE_PLUGINS_DIR"
 
-    # Determine which settings file to update
-    SETTINGS_FILE="$CLAUDE_SETTINGS_LOCAL"
-    if [ ! -f "$SETTINGS_FILE" ] && [ -f "$CLAUDE_SETTINGS" ]; then
-        # If only settings.json exists, use that
-        SETTINGS_FILE="$CLAUDE_SETTINGS"
-    fi
+    # Install as local plugin (symlink to plugins/local/)
+    ln -sf "$SCRIPT_DIR" "$CLAUDE_PLUGINS_DIR/agent-bus"
+    log_success "Plugin symlinked to $CLAUDE_PLUGINS_DIR/agent-bus"
 
-    if [ -f "$SETTINGS_FILE" ]; then
-        log_info "Updating existing Claude Code settings..."
-        # Use node to merge configs
+    # Enable the plugin in settings.json
+    if [ -f "$CLAUDE_SETTINGS" ]; then
+        log_info "Enabling plugin in settings.json..."
         node -e "
 const fs = require('fs');
-let existing = {};
+let settings = {};
 try {
-    existing = JSON.parse(fs.readFileSync('$SETTINGS_FILE', 'utf8'));
+    settings = JSON.parse(fs.readFileSync('$CLAUDE_SETTINGS', 'utf8'));
 } catch (e) {}
-existing.mcpServers = existing.mcpServers || {};
-existing.mcpServers['agent-bus'] = {
-    command: 'node',
-    args: ['$SCRIPT_DIR/dist/mcp-server/index.js'],
-    env: {}
-};
-fs.writeFileSync('$SETTINGS_FILE', JSON.stringify(existing, null, 2));
+
+// Remove old mcpServers entry if present (doesn't work there)
+delete settings.mcpServers?.['agent-bus'];
+if (settings.mcpServers && Object.keys(settings.mcpServers).length === 0) {
+    delete settings.mcpServers;
+}
+
+// Enable as local plugin
+settings.enabledPlugins = settings.enabledPlugins || {};
+settings.enabledPlugins['agent-bus@local'] = true;
+
+fs.writeFileSync('$CLAUDE_SETTINGS', JSON.stringify(settings, null, 2));
+console.log('Plugin enabled in settings.json');
 "
     else
-        log_info "Creating Claude Code settings..."
-        cat > "$CLAUDE_SETTINGS_LOCAL" << EOF
+        log_info "Creating Claude Code settings with plugin enabled..."
+        cat > "$CLAUDE_SETTINGS" << EOF
 {
-  "mcpServers": {
-    "agent-bus": {
-      "command": "node",
-      "args": ["$SCRIPT_DIR/dist/mcp-server/index.js"],
-      "env": {}
-    }
+  "enabledPlugins": {
+    "agent-bus@local": true
   }
 }
 EOF
-        SETTINGS_FILE="$CLAUDE_SETTINGS_LOCAL"
     fi
 
-    log_success "Claude Code MCP server configured at $SETTINGS_FILE"
+    log_success "Claude Code plugin installed and enabled"
 
     # Create Claude Code skill links
     CLAUDE_SKILLS_DIR="$CLAUDE_DIR/skills"
@@ -184,10 +183,23 @@ uninstall() {
     log_warn "Note: You may need to manually remove 'agent-bus' from ~/.config/opencode/opencode.json"
 
     # Claude Code
+    rm -f "$HOME/.claude/plugins/local/agent-bus"
     rm -f "$HOME/.claude/skills/agent-message-bus"
     rm -f "$HOME/.claude/skills/agent-coordination-patterns"
-    log_info "Removed Claude Code skills symlinks"
-    log_warn "Note: You may need to manually remove 'agent-bus' from ~/.claude/settings.json or settings.local.json"
+    log_info "Removed Claude Code plugin and skills symlinks"
+
+    # Disable plugin in settings.json
+    if [ -f "$HOME/.claude/settings.json" ]; then
+        node -e "
+const fs = require('fs');
+try {
+    const settings = JSON.parse(fs.readFileSync('$HOME/.claude/settings.json', 'utf8'));
+    delete settings.enabledPlugins?.['agent-bus@local'];
+    fs.writeFileSync('$HOME/.claude/settings.json', JSON.stringify(settings, null, 2));
+    console.log('Disabled plugin in settings.json');
+} catch (e) {}
+"
+    fi
 
     log_success "Uninstall complete"
 }
