@@ -7,8 +7,40 @@ import {
   ListToolsRequestSchema,
   type Tool,
 } from '@modelcontextprotocol/sdk/types.js';
+import { z } from 'zod';
 import { initializeDatabase } from './database.js';
 import { MessageBus } from './bus.js';
+
+// Zod validation schemas for critical tools
+const RegisterAgentSchema = z.object({
+  agent_id: z.string().min(1, 'agent_id is required'),
+  session_id: z.string().min(1, 'session_id is required'),
+  metadata: z.record(z.unknown()).optional()
+});
+
+const SendMessageSchema = z.object({
+  channel: z.string().min(1, 'channel is required'),
+  agent_id: z.string().min(1, 'agent_id is required'),
+  session_id: z.string().min(1, 'session_id is required'),
+  content: z.string().min(1, 'content is required'),
+  priority: z.number().optional(),
+  ttl_seconds: z.number().positive().optional()
+});
+
+const RequestSchema = z.object({
+  channel: z.string().min(1, 'channel is required'),
+  agent_id: z.string().min(1, 'agent_id is required'),
+  session_id: z.string().min(1, 'session_id is required'),
+  content: z.string().min(1, 'content is required'),
+  ttl_seconds: z.number().positive().optional()
+});
+
+const RespondSchema = z.object({
+  correlation_id: z.string().min(1, 'correlation_id is required'),
+  agent_id: z.string().min(1, 'agent_id is required'),
+  session_id: z.string().min(1, 'session_id is required'),
+  content: z.string().min(1, 'content is required')
+});
 
 // Initialize database and bus
 const db = initializeDatabase();
@@ -192,7 +224,7 @@ const server = new Server(
   },
   {
     capabilities: {
-      tools: {},
+      tools: { listChanged: true },
     },
   }
 );
@@ -209,7 +241,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case 'bus_register_agent': {
-        const { agent_id, session_id, metadata } = args as { agent_id: string; session_id: string; metadata?: Record<string, unknown> };
+        const { agent_id, session_id, metadata } = RegisterAgentSchema.parse(args);
         const agent = bus.registerAgent(agent_id, session_id, metadata ?? {});
         return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent }, null, 2) }] };
       }
@@ -227,9 +259,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'bus_send': {
-        const { channel, agent_id, session_id, content, priority, ttl_seconds } = args as {
-          channel: string; agent_id: string; session_id: string; content: string; priority?: number; ttl_seconds?: number;
-        };
+        const { channel, agent_id, session_id, content, priority, ttl_seconds } = SendMessageSchema.parse(args);
         const message = bus.sendMessage(channel, agent_id, session_id, content, {
           priority,
           ttlSeconds: ttl_seconds
@@ -257,9 +287,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'bus_request': {
-        const { channel, agent_id, session_id, content, ttl_seconds } = args as {
-          channel: string; agent_id: string; session_id: string; content: string; ttl_seconds?: number;
-        };
+        const { channel, agent_id, session_id, content, ttl_seconds } = RequestSchema.parse(args);
         const message = bus.sendRequest(channel, agent_id, session_id, content, ttl_seconds ?? 60);
         return { content: [{ type: 'text', text: JSON.stringify({
           success: true,
@@ -269,9 +297,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case 'bus_respond': {
-        const { correlation_id, agent_id, session_id, content } = args as {
-          correlation_id: string; agent_id: string; session_id: string; content: string;
-        };
+        const { correlation_id, agent_id, session_id, content } = RespondSchema.parse(args);
         const message = bus.sendResponse(correlation_id, agent_id, session_id, content);
         return { content: [{ type: 'text', text: JSON.stringify({ success: true, message }, null, 2) }] };
       }
