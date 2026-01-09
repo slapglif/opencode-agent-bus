@@ -16,7 +16,9 @@ export class MessageBus {
       ON CONFLICT(name) DO UPDATE SET description = ?, message_ttl_seconds = ?
     `);
     stmt.run(name, description, ttlSeconds, description, ttlSeconds);
-    return this.getChannel(name)!;
+    const result = this.getChannel(name);
+    if (!result) throw new Error(`Failed to create/retrieve channel: ${name}`);
+    return result;
   }
 
   getChannel(name: string): Channel | null {
@@ -40,7 +42,9 @@ export class MessageBus {
     `);
     const metaJson = JSON.stringify(metadata);
     stmt.run(agentId, sessionId, metaJson, metaJson);
-    return this.getAgent(agentId, sessionId)!;
+    const result = this.getAgent(agentId, sessionId);
+    if (!result) throw new Error(`Failed to register/retrieve agent: ${agentId}/${sessionId}`);
+    return result;
   }
 
   getAgent(agentId: string, sessionId: string): Agent | null {
@@ -49,6 +53,9 @@ export class MessageBus {
   }
 
   listAgents(activeWithinSeconds: number = 300): Agent[] {
+    if (!Number.isInteger(activeWithinSeconds) || activeWithinSeconds < 0) {
+      throw new Error('activeWithinSeconds must be a non-negative integer');
+    }
     const stmt = this.db.prepare(`
       SELECT * FROM agents
       WHERE datetime(last_seen) > datetime('now', '-' || ? || ' seconds')
@@ -63,7 +70,12 @@ export class MessageBus {
       throw new Error(`Agent ${agentId} not registered`);
     }
 
-    const channels = JSON.parse(agent.subscribed_channels) as string[];
+    let channels: string[];
+    try {
+      channels = JSON.parse(agent.subscribed_channels) as string[];
+    } catch {
+      channels = [];
+    }
     if (!channels.includes(channel)) {
       channels.push(channel);
       const stmt = this.db.prepare('UPDATE agents SET subscribed_channels = ? WHERE agent_id = ? AND session_id = ?');
@@ -75,7 +87,12 @@ export class MessageBus {
     const agent = this.getAgent(agentId, sessionId);
     if (!agent) return;
 
-    const channels = JSON.parse(agent.subscribed_channels) as string[];
+    let channels: string[];
+    try {
+      channels = JSON.parse(agent.subscribed_channels) as string[];
+    } catch {
+      channels = [];
+    }
     const filtered = channels.filter(c => c !== channel);
     const stmt = this.db.prepare('UPDATE agents SET subscribed_channels = ? WHERE agent_id = ? AND session_id = ?');
     stmt.run(JSON.stringify(filtered), agentId, sessionId);
@@ -95,19 +112,21 @@ export class MessageBus {
     } = {}
   ): Message {
     const id = generateMessageId();
-    const channelInfo = this.getChannel(channel);
+    let effectiveChannelInfo = this.getChannel(channel);
 
-    if (!channelInfo) {
+    if (!effectiveChannelInfo) {
       // Auto-create channel if it doesn't exist
-      this.createChannel(channel);
+      effectiveChannelInfo = this.createChannel(channel);
     }
 
-    const ttl = options.ttlSeconds ?? channelInfo?.message_ttl_seconds ?? 3600;
-    const expiresAt = ttl > 0 ? `datetime('now', '+${ttl} seconds')` : null;
+    const ttl = options.ttlSeconds ?? effectiveChannelInfo.message_ttl_seconds ?? 3600;
+    const expiresAt = ttl > 0
+      ? new Date(Date.now() + ttl * 1000).toISOString().replace('T', ' ').slice(0, 19)
+      : null;
 
     const stmt = this.db.prepare(`
       INSERT INTO messages (id, channel, sender_agent, sender_session, content, message_type, correlation_id, priority, expires_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${expiresAt ? expiresAt : 'NULL'})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     stmt.run(
@@ -118,10 +137,13 @@ export class MessageBus {
       content,
       options.messageType ?? 'broadcast',
       options.correlationId ?? null,
-      options.priority ?? 0
+      options.priority ?? 0,
+      expiresAt
     );
 
-    return this.getMessage(id)!;
+    const result = this.getMessage(id);
+    if (!result) throw new Error(`Failed to create/retrieve message: ${id}`);
+    return result;
   }
 
   getMessage(id: string): Message | null {
@@ -202,7 +224,11 @@ export class MessageBus {
     content: string
   ): Message {
     // Find the original request to get the channel
-    const stmt = this.db.prepare('SELECT channel FROM messages WHERE correlation_id = ? OR id = ?');
+    const stmt = this.db.prepare(`
+      SELECT channel FROM messages
+      WHERE (id = ? OR correlation_id = ?) AND message_type = 'request'
+      LIMIT 1
+    `);
     const original = stmt.get(correlationId, correlationId) as { channel: string } | undefined;
 
     if (!original) {
