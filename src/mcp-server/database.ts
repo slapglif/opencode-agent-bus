@@ -2,6 +2,7 @@ import Database from 'better-sqlite3';
 import { join } from 'path';
 import { homedir } from 'os';
 import { mkdirSync, existsSync } from 'fs';
+import { randomUUID } from 'crypto';
 
 export interface Message {
   id: string;
@@ -45,6 +46,8 @@ export function initializeDatabase(): Database.Database {
 
   // Enable WAL mode for better concurrent access
   db.pragma('journal_mode = WAL');
+  // Enable foreign key enforcement
+  db.pragma('foreign_keys = ON');
 
   // Create tables
   db.exec(`
@@ -70,7 +73,7 @@ export function initializeDatabase(): Database.Database {
       sender_agent TEXT NOT NULL,
       sender_session TEXT NOT NULL,
       content TEXT NOT NULL,
-      message_type TEXT DEFAULT 'broadcast',
+      message_type TEXT DEFAULT 'broadcast' CHECK(message_type IN ('broadcast', 'direct', 'request', 'response')),
       correlation_id TEXT,
       priority INTEGER DEFAULT 0,
       created_at TEXT DEFAULT (datetime('now')),
@@ -83,6 +86,7 @@ export function initializeDatabase(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
     CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_correlation ON messages(correlation_id);
+    CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_agent, sender_session);
     CREATE INDEX IF NOT EXISTS idx_agents_session ON agents(session_id);
 
     -- Create default channels
@@ -97,5 +101,5 @@ export function initializeDatabase(): Database.Database {
 }
 
 export function generateMessageId(): string {
-  return `msg_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  return `msg_${randomUUID()}`;
 }
