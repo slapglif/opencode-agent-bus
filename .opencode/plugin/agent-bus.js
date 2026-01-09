@@ -5,10 +5,6 @@
  * and coordination between OpenCode sessions.
  */
 
-import { join } from 'path';
-import { homedir } from 'os';
-import { existsSync, readFileSync } from 'fs';
-
 // Generate a session ID for this OpenCode instance
 const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
@@ -22,14 +18,14 @@ export const AgentBusPlugin = async ({ project, client, $, directory, worktree }
   return {
     tools: [
       {
-        name: 'bus_quick_send',
-        description: 'Quick send a message to other agents. Auto-registers if not registered.',
+        name: 'bus_send_help',
+        description: 'Get instructions for sending messages on the agent bus.',
         schema: z.object({
           channel: z.string().default('global').describe('Channel to send to'),
           message: z.string().describe('Message content'),
           agent_name: z.string().optional().describe('Your agent name (default: "opencode")')
         }),
-        execute: async ({ channel = 'global', message, agent_name = 'opencode' }) => {
+        execute: async ({ channel, message, agent_name = 'opencode' }) => {
           // This is a convenience wrapper - the actual bus_send is in the MCP server
           return `To send this message, use the bus_send MCP tool with:
 - channel: "${channel}"
@@ -60,7 +56,7 @@ Or if you need to register first:
 
     // Hook: Inject agent bus context on first message
     'chat.message': async ({ messages, params }) => {
-      // Only inject on first user message in session
+      // Only inject context on first exchange (system message + first user message)
       if (messages.length > 2) return;
 
       const agentBusContext = `
@@ -116,12 +112,12 @@ For detailed usage, use skill: \`agent-message-bus\`
     },
 
     // Hook: Re-inject context after compaction
-    'session.compacted': async () => {
+    'session.compacted': async ({ messages }) => {
+      // Inject reminder after context compaction
+      console.error(`Agent bus: Context compacted, session ${sessionId}`);
+      // Return additional context to append
       return {
-        context: `<agent-bus-reminder>
-Session ID for agent bus: ${sessionId}
-Use bus_* MCP tools for multi-agent communication.
-</agent-bus-reminder>`
+        additionalContext: `Session ID for agent bus: ${sessionId}. Use bus_* MCP tools for multi-agent communication.`
       };
     }
   };
