@@ -1,6 +1,6 @@
-# OpenCode Agent Message Bus
+# Agent Message Bus
 
-A multi-agent communication plugin for [OpenCode.ai](https://opencode.ai) that enables agents to send and receive messages across sessions, coordinate tasks, and work together on complex workflows.
+A multi-agent communication plugin for **[OpenCode.ai](https://opencode.ai)** and **[Claude Code](https://claude.ai/claude-code)** that enables agents to send and receive messages across sessions, coordinate tasks, and work together on complex workflows.
 
 ## Features
 
@@ -9,60 +9,48 @@ A multi-agent communication plugin for [OpenCode.ai](https://opencode.ai) that e
 - **Channel-Based Routing** - Organize messages by topic
 - **Agent Registration** - Track active agents and their capabilities
 - **Auto-Expiring Messages** - Configurable TTL for message cleanup
-- **OpenCode Integration** - Native plugin with context injection
+- **Cross-Platform** - Works with both OpenCode and Claude Code
 - **Skills & Agents** - Documentation and monitoring tools included
 
-## Installation
+## Quick Install
 
-### 1. Clone the Repository
+### One-Line Install
 
 ```bash
-git clone https://github.com/[user]/opencode-agent-bus.git
+git clone https://github.com/slapglif/opencode-agent-bus.git ~/.local/share/agent-bus && cd ~/.local/share/agent-bus && ./install.sh
+```
+
+### Manual Install
+
+```bash
+# Clone the repository
+git clone https://github.com/slapglif/opencode-agent-bus.git
 cd opencode-agent-bus
+
+# Run the installer (auto-detects OpenCode and Claude Code)
+./install.sh
 ```
 
-### 2. Install Dependencies
+The installer will:
+1. Build the MCP server
+2. Detect which AI coding tools you have installed
+3. Configure the MCP server for each tool
+4. Symlink skills for easy access
+5. Print next steps
+
+### Install Options
 
 ```bash
-npm install
+./install.sh              # Auto-detect and install for detected tools
+./install.sh opencode     # Install for OpenCode only
+./install.sh claude       # Install for Claude Code only
+./install.sh both         # Install for both tools
+./install.sh uninstall    # Remove installation
 ```
 
-### 3. Build the MCP Server
+### Restart Your Tool
 
-```bash
-npm run build
-```
-
-### 4. Configure OpenCode
-
-Add to your `opencode.json` (project or global):
-
-```json
-{
-  "mcp": {
-    "agent-bus": {
-      "type": "local",
-      "command": ["node", "/path/to/opencode-agent-bus/dist/mcp-server/index.js"],
-      "enabled": true
-    }
-  },
-  "plugin": ["file:///path/to/opencode-agent-bus/.opencode/plugin/agent-bus.js"]
-}
-```
-
-Or symlink for convenience:
-
-```bash
-# Global plugin
-mkdir -p ~/.config/opencode/plugin
-ln -sf /path/to/opencode-agent-bus/.opencode/plugin/agent-bus.js ~/.config/opencode/plugin/agent-bus.js
-
-# Global MCP config - add to ~/.config/opencode/opencode.json
-```
-
-### 5. Restart OpenCode
-
-The agent bus will be available in your next session.
+After installation, restart OpenCode or Claude Code. The `bus_*` MCP tools will be available automatically.
 
 ## Quick Start
 
@@ -110,17 +98,24 @@ bus_receive(channel="global", agent_id="my-agent")
 
 Load skills for detailed documentation:
 
+**OpenCode:**
 ```
 use_skill agent-message-bus
 use_skill agent-coordination-patterns
 ```
 
-## Commands
+**Claude Code:**
+```
+/skill agent-message-bus
+/skill agent-coordination-patterns
+```
+
+## Commands (OpenCode)
 
 - `/bus-status [seconds]` - Check bus status and active agents
 - `/bus-broadcast <message>` - Broadcast a message to all agents
 
-## Agents
+## Agents (OpenCode)
 
 - `@bus-monitor` - Monitor bus health and report status
 
@@ -128,7 +123,7 @@ use_skill agent-coordination-patterns
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                      OpenCode Sessions                       │
+│              AI Coding Tool Sessions                         │
 ├──────────────┬──────────────┬──────────────┬────────────────┤
 │   Agent A    │   Agent B    │   Agent C    │    Agent D     │
 │  (Session 1) │  (Session 2) │  (Session 3) │   (Session 4)  │
@@ -152,6 +147,40 @@ use_skill agent-coordination-patterns
 Messages are stored in SQLite at:
 ```
 ~/.config/opencode/agent-bus/messages.db
+```
+
+## Manual Configuration
+
+### OpenCode
+
+Add to `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "agent-bus": {
+      "type": "local",
+      "command": ["node", "/path/to/opencode-agent-bus/dist/mcp-server/index.js"],
+      "enabled": true
+    }
+  },
+  "plugin": ["file:///path/to/opencode-agent-bus/.opencode/plugin/agent-bus.js"]
+}
+```
+
+### Claude Code
+
+Add to `~/.claude/settings.local.json`:
+
+```json
+{
+  "mcpServers": {
+    "agent-bus": {
+      "command": "node",
+      "args": ["/path/to/opencode-agent-bus/dist/mcp-server/index.js"]
+    }
+  }
+}
 ```
 
 ## Contributing
