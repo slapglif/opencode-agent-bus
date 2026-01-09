@@ -1,0 +1,11 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "agent-bus": {
+      "type": "local",
+      "command": ["node", "dist/mcp-server/index.js"],
+      "enabled": true
+    }
+  },
+  "plugin": ["file://.opencode/plugin/agent-bus.js"]
+}
