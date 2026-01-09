@@ -1,0 +1,339 @@
+#!/usr/bin/env node
+
+import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import {
+  CallToolRequestSchema,
+  ListToolsRequestSchema,
+  type Tool,
+} from '@modelcontextprotocol/sdk/types.js';
+import { initializeDatabase } from './database.js';
+import { MessageBus } from './bus.js';
+
+// Initialize database and bus
+const db = initializeDatabase();
+const bus = new MessageBus(db);
+
+// Tool definitions
+const tools: Tool[] = [
+  {
+    name: 'bus_register_agent',
+    description: 'Register this agent on the message bus. Call this at the start of any session that needs to communicate with other agents.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Unique identifier for this agent (e.g., "code-reviewer", "test-runner")' },
+        session_id: { type: 'string', description: 'Current session ID (use a unique ID per conversation)' },
+        metadata: { type: 'object', description: 'Optional metadata about the agent capabilities' }
+      },
+      required: ['agent_id', 'session_id']
+    }
+  },
+  {
+    name: 'bus_subscribe',
+    description: 'Subscribe to a channel to receive messages. Agents only receive messages from channels they subscribe to.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        session_id: { type: 'string', description: 'Your session ID' },
+        channel: { type: 'string', description: 'Channel name to subscribe to (e.g., "global", "coordination", "my-team")' }
+      },
+      required: ['agent_id', 'session_id', 'channel']
+    }
+  },
+  {
+    name: 'bus_unsubscribe',
+    description: 'Unsubscribe from a channel to stop receiving its messages.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        session_id: { type: 'string', description: 'Your session ID' },
+        channel: { type: 'string', description: 'Channel name to unsubscribe from' }
+      },
+      required: ['agent_id', 'session_id', 'channel']
+    }
+  },
+  {
+    name: 'bus_send',
+    description: 'Send a message to a channel. All agents subscribed to this channel will be able to receive it.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel to send message to' },
+        agent_id: { type: 'string', description: 'Your agent ID (sender)' },
+        session_id: { type: 'string', description: 'Your session ID' },
+        content: { type: 'string', description: 'Message content (can be JSON for structured data)' },
+        priority: { type: 'number', description: 'Message priority (higher = more urgent). Default: 0' },
+        ttl_seconds: { type: 'number', description: 'Time-to-live in seconds. Default: 3600 (1 hour)' }
+      },
+      required: ['channel', 'agent_id', 'session_id', 'content']
+    }
+  },
+  {
+    name: 'bus_receive',
+    description: 'Receive messages from a channel. Returns unacknowledged messages by default.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel to receive messages from' },
+        agent_id: { type: 'string', description: 'Your agent ID (to exclude your own messages)' },
+        limit: { type: 'number', description: 'Maximum number of messages to receive. Default: 10' },
+        since: { type: 'string', description: 'Only get messages after this ISO timestamp' },
+        include_acknowledged: { type: 'boolean', description: 'Include already acknowledged messages. Default: false' }
+      },
+      required: ['channel']
+    }
+  },
+  {
+    name: 'bus_acknowledge',
+    description: 'Acknowledge receipt/processing of a message. Prevents the message from showing up in future bus_receive calls.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        message_id: { type: 'string', description: 'ID of the message to acknowledge' },
+        agent_id: { type: 'string', description: 'Your agent ID (for tracking who acknowledged)' }
+      },
+      required: ['message_id', 'agent_id']
+    }
+  },
+  {
+    name: 'bus_request',
+    description: 'Send a request and wait for responses from other agents. Use for request-response patterns.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        channel: { type: 'string', description: 'Channel to send request to' },
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        session_id: { type: 'string', description: 'Your session ID' },
+        content: { type: 'string', description: 'Request content' },
+        ttl_seconds: { type: 'number', description: 'How long to wait for responses. Default: 60' }
+      },
+      required: ['channel', 'agent_id', 'session_id', 'content']
+    }
+  },
+  {
+    name: 'bus_respond',
+    description: 'Send a response to a previous request.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        correlation_id: { type: 'string', description: 'Correlation ID from the original request message' },
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        session_id: { type: 'string', description: 'Your session ID' },
+        content: { type: 'string', description: 'Response content' }
+      },
+      required: ['correlation_id', 'agent_id', 'session_id', 'content']
+    }
+  },
+  {
+    name: 'bus_get_responses',
+    description: 'Get all responses for a previous request.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        correlation_id: { type: 'string', description: 'Correlation ID from the original request' }
+      },
+      required: ['correlation_id']
+    }
+  },
+  {
+    name: 'bus_list_channels',
+    description: 'List all available channels on the message bus.',
+    inputSchema: {
+      type: 'object',
+      properties: {}
+    }
+  },
+  {
+    name: 'bus_create_channel',
+    description: 'Create a new channel for message routing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Channel name (lowercase, no spaces)' },
+        description: { type: 'string', description: 'Channel description' },
+        ttl_seconds: { type: 'number', description: 'Default message TTL for this channel. Default: 3600' }
+      },
+      required: ['name']
+    }
+  },
+  {
+    name: 'bus_list_agents',
+    description: 'List all active agents on the message bus.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        active_within_seconds: { type: 'number', description: 'Only show agents active within this many seconds. Default: 300' }
+      }
+    }
+  },
+  {
+    name: 'bus_heartbeat',
+    description: 'Send a heartbeat to indicate this agent is still active. Call periodically during long-running tasks.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'Your agent ID' },
+        session_id: { type: 'string', description: 'Your session ID' },
+        status: { type: 'string', description: 'Optional status message (e.g., "processing", "idle", "waiting")' }
+      },
+      required: ['agent_id', 'session_id']
+    }
+  }
+];
+
+// Create server
+const server = new Server(
+  {
+    name: 'opencode-agent-bus',
+    version: '0.1.0',
+  },
+  {
+    capabilities: {
+      tools: {},
+    },
+  }
+);
+
+// Handle tool listing
+server.setRequestHandler(ListToolsRequestSchema, async () => {
+  return { tools };
+});
+
+// Handle tool calls
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  try {
+    switch (name) {
+      case 'bus_register_agent': {
+        const { agent_id, session_id, metadata } = args as { agent_id: string; session_id: string; metadata?: Record<string, unknown> };
+        const agent = bus.registerAgent(agent_id, session_id, metadata ?? {});
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, agent }, null, 2) }] };
+      }
+
+      case 'bus_subscribe': {
+        const { agent_id, session_id, channel } = args as { agent_id: string; session_id: string; channel: string };
+        bus.subscribeToChannel(agent_id, session_id, channel);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: `Subscribed to channel: ${channel}` }) }] };
+      }
+
+      case 'bus_unsubscribe': {
+        const { agent_id, session_id, channel } = args as { agent_id: string; session_id: string; channel: string };
+        bus.unsubscribeFromChannel(agent_id, session_id, channel);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: `Unsubscribed from channel: ${channel}` }) }] };
+      }
+
+      case 'bus_send': {
+        const { channel, agent_id, session_id, content, priority, ttl_seconds } = args as {
+          channel: string; agent_id: string; session_id: string; content: string; priority?: number; ttl_seconds?: number;
+        };
+        const message = bus.sendMessage(channel, agent_id, session_id, content, {
+          priority,
+          ttlSeconds: ttl_seconds
+        });
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, message }, null, 2) }] };
+      }
+
+      case 'bus_receive': {
+        const { channel, agent_id, limit, since, include_acknowledged } = args as {
+          channel: string; agent_id?: string; limit?: number; since?: string; include_acknowledged?: boolean;
+        };
+        const messages = bus.getMessages(channel, {
+          limit: limit ?? 10,
+          since,
+          unacknowledgedOnly: !include_acknowledged,
+          excludeSender: agent_id
+        });
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, count: messages.length, messages }, null, 2) }] };
+      }
+
+      case 'bus_acknowledge': {
+        const { message_id, agent_id } = args as { message_id: string; agent_id: string };
+        const acknowledged = bus.acknowledgeMessage(message_id, agent_id);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: acknowledged, message_id }) }] };
+      }
+
+      case 'bus_request': {
+        const { channel, agent_id, session_id, content, ttl_seconds } = args as {
+          channel: string; agent_id: string; session_id: string; content: string; ttl_seconds?: number;
+        };
+        const message = bus.sendRequest(channel, agent_id, session_id, content, ttl_seconds ?? 60);
+        return { content: [{ type: 'text', text: JSON.stringify({
+          success: true,
+          message,
+          note: `Use correlation_id "${message.correlation_id}" with bus_get_responses to check for replies`
+        }, null, 2) }] };
+      }
+
+      case 'bus_respond': {
+        const { correlation_id, agent_id, session_id, content } = args as {
+          correlation_id: string; agent_id: string; session_id: string; content: string;
+        };
+        const message = bus.sendResponse(correlation_id, agent_id, session_id, content);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, message }, null, 2) }] };
+      }
+
+      case 'bus_get_responses': {
+        const { correlation_id } = args as { correlation_id: string };
+        const responses = bus.getResponses(correlation_id);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, count: responses.length, responses }, null, 2) }] };
+      }
+
+      case 'bus_list_channels': {
+        const channels = bus.listChannels();
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, channels }, null, 2) }] };
+      }
+
+      case 'bus_create_channel': {
+        const { name, description, ttl_seconds } = args as { name: string; description?: string; ttl_seconds?: number };
+        const channel = bus.createChannel(name, description ?? '', ttl_seconds ?? 3600);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, channel }, null, 2) }] };
+      }
+
+      case 'bus_list_agents': {
+        const { active_within_seconds } = args as { active_within_seconds?: number };
+        const agents = bus.listAgents(active_within_seconds ?? 300);
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, count: agents.length, agents }, null, 2) }] };
+      }
+
+      case 'bus_heartbeat': {
+        const { agent_id, session_id, status } = args as { agent_id: string; session_id: string; status?: string };
+        bus.registerAgent(agent_id, session_id, { status: status ?? 'active', heartbeat: new Date().toISOString() });
+        // Also send to status channel if agent wants to broadcast
+        if (status) {
+          bus.sendMessage('status', agent_id, session_id, JSON.stringify({ status, timestamp: new Date().toISOString() }), {
+            ttlSeconds: 300
+          });
+        }
+        return { content: [{ type: 'text', text: JSON.stringify({ success: true, message: 'Heartbeat recorded' }) }] };
+      }
+
+      default:
+        return { content: [{ type: 'text', text: JSON.stringify({ error: `Unknown tool: ${name}` }) }], isError: true };
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return { content: [{ type: 'text', text: JSON.stringify({ error: message }) }], isError: true };
+  }
+});
+
+// Periodic cleanup
+setInterval(() => {
+  const expiredMessages = bus.cleanupExpiredMessages();
+  const inactiveAgents = bus.cleanupInactiveAgents();
+  if (expiredMessages > 0 || inactiveAgents > 0) {
+    console.error(`Cleanup: ${expiredMessages} expired messages, ${inactiveAgents} inactive agents`);
+  }
+}, 60000); // Every minute
+
+// Start server
+async function main() {
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+  console.error('OpenCode Agent Bus MCP server running');
+}
+
+main().catch(console.error);
