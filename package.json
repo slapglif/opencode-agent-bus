@@ -4,7 +4,11 @@
   "description": "Multi-agent message bus plugin for OpenCode - enables agent-to-agent communication",
   "type": "module",
   "main": "dist/mcp-server/index.js",
+  "bin": {
+    "agent-bus": "./dist/cli/bus-cli.js"
+  },
   "scripts": {
+    "cli": "node dist/cli/bus-cli.js",
     "build": "tsc",
     "dev": "tsc --watch",
     "start": "node dist/mcp-server/index.js",
@@ -24,6 +28,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
     "better-sqlite3": "^11.0.0",
+    "commander": "^14.0.2",
     "zod": "^3.23.0"
   },
   "devDependencies": {
