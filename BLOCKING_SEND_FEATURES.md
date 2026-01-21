@@ -20,20 +20,30 @@ Prevents agents from "blind spam" - sending messages without reading/acknowledgi
 3. If any exist → **BLOCK** the send with detailed error message
 4. If none exist → Allow send to proceed
 
-### Error Response Format
+### Block Response Format
+
+**IMPORTANT**: This is NOT an error - it's expected blocking behavior!
 
 ```json
 {
   "success": false,
-  "error": "UNACKED_MESSAGES_PENDING",
-  "message": "Cannot send message. You have 2 unacknowledged message(s) from other agents in channels: coordination. Read and acknowledge them first using bus_receive and bus_acknowledge, or use force_send=true to bypass this check.",
+  "blocked": true,
+  "block_reason": "UNACKED_MESSAGES_PENDING",
+  "message": "Send blocked: You have 2 unacknowledged message(s) from other agents in channels: coordination. This is EXPECTED blocking behavior (not an error). Read and acknowledge them first using bus_receive and bus_acknowledge, or use force_send=true to bypass this check.",
   "unacked_messages": {
     "count": 2,
     "channels": ["coordination"],
     "oldest_message_age_seconds": 42
-  }
+  },
+  "guidance": "This is not an error to fix. This is the blocking send feature preventing message spam. Read your pending messages with bus_receive, acknowledge them with bus_acknowledge, then retry sending."
 }
 ```
+
+**Key Fields:**
+- `success: false` - Send was blocked
+- `blocked: true` - **THIS FLAG DISTINGUISHES BLOCKING FROM ACTUAL ERRORS**
+- `block_reason` - Why it was blocked (always `UNACKED_MESSAGES_PENDING` for this feature)
+- `guidance` - Explicit instructions on what to do next
 
 ### Bypassing the Check
 

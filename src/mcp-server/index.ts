@@ -493,14 +493,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               content: [{ 
                 type: 'text', 
                 text: JSON.stringify({ 
-                  success: false, 
-                  error: 'UNACKED_MESSAGES_PENDING',
-                  message: `Cannot send message. You have ${unackedInfo.count} unacknowledged message(s) from other agents in channels: ${unackedInfo.channels.join(', ')}. Read and acknowledge them first using bus_receive and bus_acknowledge, or use force_send=true to bypass this check.`,
+                  success: false,
+                  blocked: true,
+                  block_reason: 'UNACKED_MESSAGES_PENDING',
+                  message: `Send blocked: You have ${unackedInfo.count} unacknowledged message(s) from other agents in channels: ${unackedInfo.channels.join(', ')}. This is EXPECTED blocking behavior (not an error). Read and acknowledge them first using bus_receive and bus_acknowledge, or use force_send=true to bypass this check.`,
                   unacked_messages: {
                     count: unackedInfo.count,
                     channels: unackedInfo.channels,
                     oldest_message_age_seconds: Math.round(unackedInfo.oldest_age_seconds ?? 0)
-                  }
+                  },
+                  guidance: "This is not an error to fix. This is the blocking send feature preventing message spam. Read your pending messages with bus_receive, acknowledge them with bus_acknowledge, then retry sending."
                 }, null, 2) 
               }] 
             };

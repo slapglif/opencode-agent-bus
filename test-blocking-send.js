@@ -118,13 +118,16 @@ async function runTests() {
       }
     });
     const blockedData = JSON.parse(blockedSendResult.result.content[0].text);
-    if (!blockedData.success && blockedData.error === 'UNACKED_MESSAGES_PENDING') {
+    if (!blockedData.success && blockedData.blocked === true && blockedData.block_reason === 'UNACKED_MESSAGES_PENDING') {
       console.log('✅ BLOCKED as expected!');
-      console.log('   Error:', blockedData.message);
+      console.log('   Block reason:', blockedData.block_reason);
+      console.log('   Message:', blockedData.message);
       console.log('   Unacked count:', blockedData.unacked_messages.count);
+      console.log('   Guidance:', blockedData.guidance);
       testsPassed++;
     } else {
       console.log('❌ FAILED: Should have been blocked but was not!');
+      console.log('   Response:', blockedData);
       testsFailed++;
     }
 
