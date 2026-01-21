@@ -1,124 +1,67 @@
 /**
  * OpenCode Agent Bus Plugin
  *
- * Provides automatic agent registration, message injection hooks,
- * and coordination between OpenCode sessions.
+ * Provides automatic agent registration and session tracking.
+ * The MCP server handles all message bus operations.
  */
 
 // Generate a session ID for this OpenCode instance
 const sessionId = `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-export const AgentBusPlugin = async ({ project, client, $, directory, worktree }) => {
+export const AgentBusPlugin = async ({ project, directory }) => {
   const { z } = await import('zod');
-
-  // Track registered agent info
-  let registeredAgent = null;
-  let subscribedChannels = ['global'];
 
   return {
     tools: [
       {
-        name: 'bus_send_help',
-        description: 'Get instructions for sending messages on the agent bus.',
-        schema: z.object({
-          channel: z.string().default('global').describe('Channel to send to'),
-          message: z.string().describe('Message content'),
-          agent_name: z.string().optional().describe('Your agent name (default: "opencode")')
-        }),
-        execute: async ({ channel, message, agent_name = 'opencode' }) => {
-          // This is a convenience wrapper - the actual bus_send is in the MCP server
-          return `To send this message, use the bus_send MCP tool with:
-- channel: "${channel}"
-- agent_id: "${agent_name}"
-- session_id: "${sessionId}"
-- content: ${JSON.stringify(message)}
-
-Or if you need to register first:
-1. Call bus_register_agent with agent_id="${agent_name}", session_id="${sessionId}"
-2. Call bus_subscribe with channel="${channel}"
-3. Call bus_send with the message content`;
-        }
-      },
-      {
         name: 'bus_my_session',
-        description: 'Get the current session ID for this OpenCode instance.',
+        description: 'Get the current session ID for this OpenCode instance. Use this when registering with the agent bus.',
         schema: z.object({}),
         execute: async () => {
           return {
             session_id: sessionId,
             project: project?.name || 'unknown',
             directory: directory || process.cwd(),
-            registered_agent: registeredAgent
+            usage: `Use bus_register_agent(agent_id="your-name", session_id="${sessionId}") to register on the bus.`
           };
         }
+      },
+      {
+        name: 'bus_quick_start',
+        description: 'Get quick start instructions for the agent message bus.',
+        schema: z.object({}),
+        execute: async () => {
+          return `# Agent Bus Quick Start
+
+**Your Session ID:** ${sessionId}
+
+## Step 1: Register
+\`\`\`
+bus_register_agent(agent_id="my-agent", session_id="${sessionId}")
+\`\`\`
+
+## Step 2: Subscribe to a channel
+\`\`\`
+bus_subscribe(agent_id="my-agent", session_id="${sessionId}", channel="global")
+\`\`\`
+
+## Step 3: Send a message
+\`\`\`
+bus_send(channel="global", agent_id="my-agent", session_id="${sessionId}", content="Hello!")
+\`\`\`
+
+## Step 4: Receive messages
+\`\`\`
+bus_receive(channel="global")
+\`\`\`
+
+## Available Channels
+- global - Broadcast to all agents
+- coordination - Task assignment
+- status - Agent heartbeats
+- errors - Error reporting`;
+        }
       }
-    ],
-
-    // Hook: Inject agent bus context on first message
-    'chat.message': async ({ messages, params }) => {
-      // Only inject context on first exchange (system message + first user message)
-      if (messages.length > 2) return;
-
-      const agentBusContext = `
-<agent-bus-available>
-You have access to a multi-agent message bus for coordinating with other AI agents.
-
-**Session ID:** ${sessionId}
-**Project:** ${project?.name || 'unknown'}
-
-**Available MCP Tools:**
-- \`bus_register_agent\` - Register on the bus (do this first!)
-- \`bus_subscribe\` - Subscribe to channels
-- \`bus_send\` - Send messages to channels
-- \`bus_receive\` - Receive messages from channels
-- \`bus_request\` / \`bus_respond\` - Request-response pattern
-- \`bus_list_agents\` - See active agents
-- \`bus_list_channels\` - See available channels
-
-**Quick Start:**
-1. Register: \`bus_register_agent(agent_id="my-agent", session_id="${sessionId}")\`
-2. Subscribe: \`bus_subscribe(agent_id="my-agent", session_id="${sessionId}", channel="global")\`
-3. Send: \`bus_send(channel="global", agent_id="my-agent", session_id="${sessionId}", content="Hello!")\`
-4. Receive: \`bus_receive(channel="global")\`
-
-**Default Channels:**
-- \`global\` - Broadcast to all agents
-- \`coordination\` - Task assignment and coordination
-- \`status\` - Agent status and heartbeats
-- \`errors\` - Error reporting
-
-For detailed usage, use skill: \`agent-message-bus\`
-</agent-bus-available>`;
-
-      // Inject as system context
-      return {
-        messages: [
-          ...messages,
-          {
-            role: 'system',
-            content: agentBusContext
-          }
-        ]
-      };
-    },
-
-    // Hook: Handle session events
-    event: async ({ event }) => {
-      // Track session lifecycle for potential cleanup
-      if (event.type === 'session.deleted' || event.type === 'session.error') {
-        // Could notify other agents that this session is ending
-        console.error(`Agent bus: Session ${sessionId} ending`);
-      }
-    },
-
-    // Hook: Re-inject context after compaction
-    'session.compacted': async ({ messages }) => {
-      // Inject reminder after context compaction
-      console.error(`Agent bus: Context compacted, session ${sessionId}`);
-      // Return additional context to append
-      return {
-        additionalContext: `Session ID for agent bus: ${sessionId}. Use bus_* MCP tools for multi-agent communication.`
-      };
-    }
+    ]
   };
 };

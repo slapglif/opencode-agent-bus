@@ -9,12 +9,5 @@
   "homepage": "https://github.com/slapglif/opencode-agent-bus",
   "repository": "https://github.com/slapglif/opencode-agent-bus",
   "license": "MIT",
-  "keywords": ["mcp", "message-bus", "multi-agent", "coordination", "pub-sub"],
-  "mcpServers": {
-    "agent-bus": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp-server/index.js"],
-      "env": {}
-    }
-  }
+  "keywords": ["mcp", "message-bus", "multi-agent", "coordination", "pub-sub"]
 }

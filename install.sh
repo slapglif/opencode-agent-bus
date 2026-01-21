@@ -117,15 +117,35 @@ install_claude_code() {
 
     CLAUDE_DIR="$HOME/.claude"
     CLAUDE_SETTINGS="$CLAUDE_DIR/settings.json"
-    CLAUDE_PLUGINS_DIR="$CLAUDE_DIR/plugins/local"
+    CLAUDE_PLUGINS_CACHE="$CLAUDE_DIR/plugins/cache/local/agent-bus/0.1.0"
 
     # Create directories
     mkdir -p "$CLAUDE_DIR"
-    mkdir -p "$CLAUDE_PLUGINS_DIR"
+    mkdir -p "$(dirname "$CLAUDE_PLUGINS_CACHE")"
 
-    # Install as local plugin (symlink to plugins/local/)
-    ln -sf "$SCRIPT_DIR" "$CLAUDE_PLUGINS_DIR/agent-bus"
-    log_success "Plugin symlinked to $CLAUDE_PLUGINS_DIR/agent-bus"
+    # Install as local plugin (symlink to plugins/cache/local/)
+    rm -rf "$CLAUDE_PLUGINS_CACHE"
+    ln -sf "$SCRIPT_DIR" "$CLAUDE_PLUGINS_CACHE"
+    log_success "Plugin symlinked to $CLAUDE_PLUGINS_CACHE"
+
+    # Register in installed_plugins.json
+    INSTALLED_PLUGINS="$CLAUDE_DIR/plugins/installed_plugins.json"
+    if [ -f "$INSTALLED_PLUGINS" ]; then
+        log_info "Registering plugin in installed_plugins.json..."
+        node -e "
+const fs = require('fs');
+const plugins = JSON.parse(fs.readFileSync('$INSTALLED_PLUGINS', 'utf8'));
+plugins.plugins['agent-bus@local'] = [{
+    scope: 'user',
+    installPath: '$CLAUDE_PLUGINS_CACHE',
+    version: '0.1.0',
+    installedAt: new Date().toISOString(),
+    lastUpdated: new Date().toISOString()
+}];
+fs.writeFileSync('$INSTALLED_PLUGINS', JSON.stringify(plugins, null, 2));
+console.log('Plugin registered');
+"
+    fi
 
     # Enable the plugin in settings.json
     if [ -f "$CLAUDE_SETTINGS" ]; then
@@ -183,7 +203,7 @@ uninstall() {
     log_warn "Note: You may need to manually remove 'agent-bus' from ~/.config/opencode/opencode.json"
 
     # Claude Code
-    rm -f "$HOME/.claude/plugins/local/agent-bus"
+    rm -rf "$HOME/.claude/plugins/cache/local/agent-bus"
     rm -f "$HOME/.claude/skills/agent-message-bus"
     rm -f "$HOME/.claude/skills/agent-coordination-patterns"
     log_info "Removed Claude Code plugin and skills symlinks"

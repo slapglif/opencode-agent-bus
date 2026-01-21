@@ -1,6 +1,32 @@
 import type Database from 'better-sqlite3';
 import { generateMessageId, type Message, type Agent, type Channel } from './database.js';
 
+export interface DeadLetter {
+  id: string;
+  original_message_id: string;
+  channel: string;
+  sender_agent: string;
+  sender_session: string;
+  content: string;
+  failure_reason: string;
+  retry_count: number;
+  max_retries: number;
+  next_retry_at: string | null;
+  failed_at: string;
+  resolved_at: string | null;
+}
+
+export interface RecipientStatus {
+  agent_id: string;
+  delivered_at: string | null;
+  read_at: string | null;
+}
+
+export interface DeliveryStatus {
+  message_id: string;
+  recipients: RecipientStatus[];
+}
+
 export class MessageBus {
   private db: Database.Database;
 
@@ -178,7 +204,7 @@ export class MessageBus {
     }
 
     // Exclude expired messages
-    query += ' AND (expires_at IS NULL OR datetime(expires_at) > datetime("now"))';
+    query += ' AND (expires_at IS NULL OR datetime(expires_at) > datetime(\'now\'))';
 
     query += ' ORDER BY priority DESC, created_at ASC';
 
@@ -267,5 +293,127 @@ export class MessageBus {
     `);
     const result = stmt.run(inactiveSeconds);
     return result.changes;
+  }
+
+  addToDeadLetter(messageId: string, failureReason: string): void {
+    const message = this.getMessage(messageId);
+    if (!message) {
+      throw new Error(`Message ${messageId} not found`);
+    }
+
+    const dlqId = `dlq_${generateMessageId().slice(4)}`;
+    const stmt = this.db.prepare(`
+      INSERT INTO dead_letter_queue (id, original_message_id, channel, sender_agent, sender_session, content, failure_reason)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(dlqId, messageId, message.channel, message.sender_agent, message.sender_session, message.content, failureReason);
+  }
+
+  getDeadLetters(channel?: string, limit?: number): DeadLetter[] {
+    let query = 'SELECT * FROM dead_letter_queue WHERE resolved_at IS NULL';
+    const params: (string | number)[] = [];
+
+    if (channel) {
+      query += ' AND channel = ?';
+      params.push(channel);
+    }
+
+    query += ' ORDER BY failed_at DESC';
+
+    if (limit) {
+      query += ' LIMIT ?';
+      params.push(limit);
+    }
+
+    const stmt = this.db.prepare(query);
+    return stmt.all(...params) as DeadLetter[];
+  }
+
+  retryDeadLetter(dlqId: string, agentId: string): boolean {
+    const stmt = this.db.prepare('SELECT * FROM dead_letter_queue WHERE id = ? AND resolved_at IS NULL');
+    const dlq = stmt.get(dlqId) as DeadLetter | undefined;
+
+    if (!dlq) {
+      return false;
+    }
+
+    if (dlq.retry_count >= dlq.max_retries) {
+      return false;
+    }
+
+    try {
+      this.sendMessage(dlq.channel, dlq.sender_agent, dlq.sender_session, dlq.content);
+      const updateStmt = this.db.prepare(`
+        UPDATE dead_letter_queue
+        SET retry_count = retry_count + 1, resolved_at = datetime('now')
+        WHERE id = ?
+      `);
+      updateStmt.run(dlqId);
+      return true;
+    } catch (error) {
+      const updateStmt = this.db.prepare(`
+        UPDATE dead_letter_queue
+        SET retry_count = retry_count + 1
+        WHERE id = ?
+      `);
+      updateStmt.run(dlqId);
+      return false;
+    }
+  }
+
+  resolveDeadLetter(dlqId: string, resolution: string): boolean {
+    const stmt = this.db.prepare(`
+      UPDATE dead_letter_queue
+      SET resolved_at = datetime('now'), failure_reason = failure_reason || ' | Resolution: ' || ?
+      WHERE id = ? AND resolved_at IS NULL
+    `);
+    const result = stmt.run(resolution, dlqId);
+    return result.changes > 0;
+  }
+
+  sendMultiRecipient(channel: string, senderAgent: string, senderSession: string, content: string, recipients: string[]): Message {
+    const message = this.sendMessage(channel, senderAgent, senderSession, content, {
+      messageType: 'direct'
+    });
+
+    const recipientStmt = this.db.prepare(`
+      INSERT INTO message_recipients (message_id, agent_id)
+      VALUES (?, ?)
+    `);
+
+    for (const recipientId of recipients) {
+      recipientStmt.run(message.id, recipientId);
+    }
+
+    return message;
+  }
+
+  sendDirectMessage(fromAgent: string, toAgent: string, sessionId: string, content: string): Message {
+    const agents = [fromAgent, toAgent].sort();
+    const dmChannel = `dm:${agents[0]}:${agents[1]}`;
+
+    let channelInfo = this.getChannel(dmChannel);
+    if (!channelInfo) {
+      channelInfo = this.createChannel(dmChannel, `Direct message between ${agents[0]} and ${agents[1]}`);
+    }
+
+    return this.sendMessage(dmChannel, fromAgent, sessionId, content, {
+      messageType: 'direct'
+    });
+  }
+
+  getDeliveryStatus(messageId: string): DeliveryStatus {
+    const stmt = this.db.prepare(`
+      SELECT agent_id, delivered_at, read_at
+      FROM message_recipients
+      WHERE message_id = ?
+      ORDER BY agent_id
+    `);
+    const recipients = stmt.all(messageId) as RecipientStatus[];
+
+    return {
+      message_id: messageId,
+      recipients
+    };
   }
 }

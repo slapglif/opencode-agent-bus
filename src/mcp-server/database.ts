@@ -83,11 +83,103 @@ export function initializeDatabase(): Database.Database {
       FOREIGN KEY (channel) REFERENCES channels(name)
     );
 
+    CREATE TABLE IF NOT EXISTS dead_letter_queue (
+      id TEXT PRIMARY KEY,
+      original_message_id TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      sender_agent TEXT NOT NULL,
+      sender_session TEXT NOT NULL,
+      content TEXT NOT NULL,
+      failure_reason TEXT NOT NULL,
+      retry_count INTEGER DEFAULT 0,
+      max_retries INTEGER DEFAULT 3,
+      next_retry_at TEXT,
+      failed_at TEXT DEFAULT (datetime('now')),
+      resolved_at TEXT,
+      FOREIGN KEY (original_message_id) REFERENCES messages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS message_recipients (
+      message_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      delivered_at TEXT,
+      read_at TEXT,
+      PRIMARY KEY (message_id, agent_id),
+      FOREIGN KEY (message_id) REFERENCES messages(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS file_transfers (
+      id TEXT PRIMARY KEY,
+      filename TEXT NOT NULL,
+      mime_type TEXT NOT NULL,
+      size_bytes INTEGER NOT NULL,
+      uploader_agent TEXT NOT NULL,
+      uploader_session TEXT NOT NULL,
+      storage_path TEXT NOT NULL,
+      checksum_sha256 TEXT NOT NULL,
+      uploaded_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT,
+      access_mode TEXT DEFAULT 'private' CHECK(access_mode IN ('private', 'channel', 'public')),
+      allowed_agents TEXT DEFAULT '[]',
+      download_count INTEGER DEFAULT 0,
+      metadata TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS recurring_messages (
+      id TEXT PRIMARY KEY,
+      channel TEXT NOT NULL,
+      sender_agent TEXT NOT NULL,
+      sender_session TEXT NOT NULL,
+      content_template TEXT NOT NULL,
+      schedule_cron TEXT,
+      schedule_interval_seconds INTEGER,
+      next_send_at TEXT NOT NULL,
+      last_sent_at TEXT,
+      enabled BOOLEAN DEFAULT 1,
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT,
+      metadata TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS health_metrics (
+      id TEXT PRIMARY KEY,
+      server_id TEXT NOT NULL,
+      timestamp TEXT DEFAULT (datetime('now')),
+      latency_ms INTEGER,
+      status TEXT CHECK(status IN ('healthy', 'degraded', 'offline')),
+      error_rate REAL,
+      message_throughput INTEGER,
+      active_agents INTEGER,
+      metadata TEXT DEFAULT '{}'
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_keys (
+      agent_id TEXT PRIMARY KEY,
+      public_key TEXT NOT NULL,
+      key_algorithm TEXT DEFAULT 'RSA-4096',
+      created_at TEXT DEFAULT (datetime('now')),
+      expires_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS encrypted_messages (
+      message_id TEXT PRIMARY KEY,
+      encrypted_content TEXT NOT NULL,
+      encryption_metadata TEXT NOT NULL,
+      recipient_keys TEXT NOT NULL,
+      FOREIGN KEY (message_id) REFERENCES messages(id)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
     CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_correlation ON messages(correlation_id);
     CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages(sender_agent, sender_session);
     CREATE INDEX IF NOT EXISTS idx_agents_session ON agents(session_id);
+    CREATE INDEX IF NOT EXISTS idx_dlq_retry ON dead_letter_queue(next_retry_at) WHERE resolved_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_recipients_agent ON message_recipients(agent_id);
+    CREATE INDEX IF NOT EXISTS idx_files_uploader ON file_transfers(uploader_agent);
+    CREATE INDEX IF NOT EXISTS idx_files_expires ON file_transfers(expires_at);
+    CREATE INDEX IF NOT EXISTS idx_recurring_next ON recurring_messages(next_send_at) WHERE enabled = 1;
+    CREATE INDEX IF NOT EXISTS idx_health_server ON health_metrics(server_id, timestamp);
 
     -- Create default channels
     INSERT OR IGNORE INTO channels (name, description) VALUES

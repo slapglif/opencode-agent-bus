@@ -10,6 +10,9 @@ import {
 import { z } from 'zod';
 import { initializeDatabase } from './database.js';
 import { MessageBus } from './bus.js';
+import { ConfigManager } from './config.js';
+import { RegistryClient } from './registry-client.js';
+import { HealthMonitor } from './health-monitor.js';
 
 // Zod validation schemas for critical tools
 const RegisterAgentSchema = z.object({
@@ -42,9 +45,10 @@ const RespondSchema = z.object({
   content: z.string().min(1, 'content is required')
 });
 
-// Initialize database and bus
 const db = initializeDatabase();
 const bus = new MessageBus(db);
+const configManager = new ConfigManager();
+const healthMonitor = new HealthMonitor(db, configManager);
 
 // Tool definitions
 const tools: Tool[] = [
@@ -355,8 +359,46 @@ setInterval(() => {
   }
 }, 60000); // Every minute
 
-// Start server
 async function main() {
+  const config = configManager.getConfig();
+  
+  if (configManager.isRegistryEnabled()) {
+    const registryUrl = configManager.getRegistryUrl();
+    if (registryUrl) {
+      try {
+        const registryClient = new RegistryClient(registryUrl, config.registry?.api_key);
+        const servers = await registryClient.discoverServers();
+        
+        if (servers.length > 0) {
+          const lastServer = configManager.getLastServer();
+          let targetServer = lastServer 
+            ? servers.find(s => s.id === lastServer.id)
+            : null;
+          
+          if (!targetServer || targetServer.status !== 'healthy') {
+            targetServer = registryClient.selectBestServer(servers);
+          }
+          
+          if (targetServer) {
+            healthMonitor.addServer(targetServer);
+            configManager.setLastServer({
+              id: targetServer.id,
+              url: targetServer.url
+            });
+            console.error(`Connected to server: ${targetServer.id} (${targetServer.url})`);
+          }
+        }
+      } catch (error) {
+        console.error('Registry discovery failed, using local mode:', error);
+        if (config.registry?.fallback_to_local) {
+          configManager.setLocalOnlyMode(true);
+        }
+      }
+    }
+  }
+  
+  healthMonitor.startMonitoring();
+  
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error('OpenCode Agent Bus MCP server running');
