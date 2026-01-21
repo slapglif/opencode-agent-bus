@@ -416,4 +416,77 @@ export class MessageBus {
       recipients
     };
   }
+
+  hasUnackedExternalMessages(agentId: string, channels: string[]): boolean {
+    if (channels.length === 0) return false;
+    
+    const placeholders = channels.map(() => '?').join(',');
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count
+      FROM messages
+      WHERE channel IN (${placeholders})
+        AND sender_agent != ?
+        AND acknowledged_at IS NULL
+        AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+    `);
+    const result = stmt.get(...channels, agentId) as { count: number };
+    return result.count > 0;
+  }
+
+  getUnackedExternalMessages(agentId: string, channels: string[]): { count: number; oldest_age_seconds: number | null; channels: string[] } {
+    if (channels.length === 0) return { count: 0, oldest_age_seconds: null, channels: [] };
+    
+    const placeholders = channels.map(() => '?').join(',');
+    const stmt = this.db.prepare(`
+      SELECT 
+        COUNT(*) as count,
+        MIN(julianday('now') - julianday(created_at)) * 86400 as oldest_age_seconds,
+        GROUP_CONCAT(DISTINCT channel) as channels
+      FROM messages
+      WHERE channel IN (${placeholders})
+        AND sender_agent != ?
+        AND acknowledged_at IS NULL
+        AND (expires_at IS NULL OR datetime(expires_at) > datetime('now'))
+    `);
+    const result = stmt.get(...channels, agentId) as { count: number; oldest_age_seconds: number | null; channels: string };
+    return {
+      count: result.count,
+      oldest_age_seconds: result.oldest_age_seconds,
+      channels: result.channels ? result.channels.split(',') : []
+    };
+  }
+
+  async waitForAck(messageId: string, timeoutMs: number = 30000, pollIntervalMs: number = 500): Promise<boolean> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeoutMs) {
+      const message = this.getMessage(messageId);
+      if (!message) {
+        throw new Error(`Message ${messageId} not found`);
+      }
+      
+      if (message.acknowledged_at) {
+        return true;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    }
+    
+    return false;
+  }
+
+  async waitForResponse(correlationId: string, timeoutMs: number = 30000, pollIntervalMs: number = 500): Promise<Message | null> {
+    const startTime = Date.now();
+    
+    while (Date.now() - startTime < timeoutMs) {
+      const responses = this.getResponses(correlationId);
+      if (responses.length > 0) {
+        return responses[0];
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, pollIntervalMs));
+    }
+    
+    return null;
+  }
 }

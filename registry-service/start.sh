@@ -9,7 +9,7 @@ if [ -f registry.pid ]; then
     fi
 fi
 
-nohup bun run server.js > logs/registry.log 2>&1 &
+nohup node server-persistent.js > logs/registry.log 2>&1 &
 echo $! > registry.pid
 echo "Registry started with PID $(cat registry.pid)"
 echo "Health: http://localhost:3456/api/v1/health"

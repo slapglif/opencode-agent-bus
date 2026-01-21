@@ -169,6 +169,56 @@ export function initializeDatabase(): Database.Database {
       FOREIGN KEY (message_id) REFERENCES messages(id)
     );
 
+    CREATE TABLE IF NOT EXISTS orch_tasks (
+      id TEXT PRIMARY KEY,
+      title TEXT NOT NULL,
+      description TEXT,
+      created_by TEXT NOT NULL,
+      input_data TEXT,
+      context TEXT,
+      tags TEXT,
+      priority INTEGER DEFAULT 0,
+      timeout_seconds INTEGER DEFAULT 3600,
+      max_retries INTEGER DEFAULT 0,
+      created_at TEXT DEFAULT (datetime('now')),
+      deadline_at TEXT,
+      status TEXT DEFAULT 'created'
+    );
+
+    CREATE TABLE IF NOT EXISTS orch_assignments (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      assigned_at TEXT DEFAULT (datetime('now')),
+      accepted_at TEXT,
+      started_at TEXT,
+      submitted_at TEXT,
+      approved_at TEXT,
+      status TEXT DEFAULT 'assigned',
+      blocking INTEGER DEFAULT 1,
+      FOREIGN KEY (task_id) REFERENCES orch_tasks(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS orch_dependencies (
+      task_id TEXT NOT NULL,
+      depends_on_task_id TEXT NOT NULL,
+      dependency_type TEXT DEFAULT 'required',
+      trigger_rule TEXT DEFAULT 'all_success',
+      PRIMARY KEY (task_id, depends_on_task_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS orch_results (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      agent_id TEXT NOT NULL,
+      result_data TEXT,
+      artifacts TEXT,
+      execution_metrics TEXT,
+      submitted_at TEXT DEFAULT (datetime('now')),
+      approved INTEGER DEFAULT 0,
+      approval_notes TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_messages_channel ON messages(channel);
     CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_correlation ON messages(correlation_id);
@@ -180,6 +230,8 @@ export function initializeDatabase(): Database.Database {
     CREATE INDEX IF NOT EXISTS idx_files_expires ON file_transfers(expires_at);
     CREATE INDEX IF NOT EXISTS idx_recurring_next ON recurring_messages(next_send_at) WHERE enabled = 1;
     CREATE INDEX IF NOT EXISTS idx_health_server ON health_metrics(server_id, timestamp);
+    CREATE INDEX IF NOT EXISTS idx_orch_tasks_status ON orch_tasks(status);
+    CREATE INDEX IF NOT EXISTS idx_orch_assignments_agent ON orch_assignments(agent_id, status);
 
     -- Create default channels
     INSERT OR IGNORE INTO channels (name, description) VALUES
