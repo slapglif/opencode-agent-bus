@@ -1,0 +1,10 @@
+{
+  "registry": {
+    "url": "https://registry.ai-smith.net/api/v1",
+    "enabled": true,
+    "fallback_to_local": true
+  },
+  "last_server": null,
+  "public_channel_registry": "your-team-name",
+  "local_only_mode": false
+}

@@ -1,0 +1,7 @@
+tunnel: agent-bus-registry
+credentials-file: /home/mikeb/.cloudflared/agent-bus-registry.json
+
+ingress:
+  - hostname: registry.ai-smith.net
+    service: http://localhost:3456
+  - service: http_status:404
